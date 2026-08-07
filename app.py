@@ -32,6 +32,12 @@ app = FastAPI(lifespan=lifespan)
 class TranslationRequest(BaseModel):
     text: str
 
+
+# 🔄 새로 추가된 모델
+class SuggestRequest(BaseModel):
+    history: list[dict]   # [{"user": "영어", "assistant": "영어"}, ...]
+
+
 @app.post("/translate/stream")
 async def translate_stream(payload: TranslationRequest):
     global LAST_ACTIVE_DOMAIN
@@ -116,12 +122,12 @@ async def translate_stream(payload: TranslationRequest):
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
-# --- 새로운 답변 제안 API ---
+# 🔄 완전히 새로 작성된 /suggest 엔드포인트
 @app.post("/suggest")
-async def suggest_replies():
-    """최근 대화를 기반으로 제안된 답변 2개 반환"""
-    suggestions = await generate_reply_suggestions(CONVO_HISTORY)
-    return JSONResponse(content={"suggestions": suggestions})
+async def suggest_replies(payload: SuggestRequest):
+    """클라이언트가 보낸 영어 대화 히스토리로 요약 + 답변 제안 반환 (다중 사용자 OK)"""
+    result = await generate_reply_suggestions(payload.history)
+    return JSONResponse(content=result)
 
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=8081, reload=True)
