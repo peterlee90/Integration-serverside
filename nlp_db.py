@@ -17,13 +17,22 @@ IRREGULAR_VERBS = {}
 INVERTED_INDEX = defaultdict(set)
 TERM_REGEX_CACHE = {}
 
+# 📌 1. 절대 경로 대신 상대 경로(현재 폴더 안의 data 폴더) 사용
+DATA_DIR = "data" 
+
 def init_exact_matches():
     global EXACT_MATCH_DICT
-    json_path = "/sgl-workspace/sglang/data/quick.json"
+    json_path = os.path.join(DATA_DIR, "quick.json")
+    
+    # 📌 2. 경로 추적 로그 추가
+    print(f"🔍 [디버그] 하드매칭(quick.json) 찾는 경로: {os.path.abspath(json_path)}")
+    
     if os.path.exists(json_path):
         with open(json_path, "r", encoding="utf-8") as f:
             EXACT_MATCH_DICT = json.load(f)
-        print(f"⚡ [하드매칭]: {len(EXACT_MATCH_DICT)}개 로드.")
+        print(f"✅ [하드매칭 로드 성공]: {len(EXACT_MATCH_DICT)}개 단어 장전 완료.")
+    else:
+        print(f"❌ [하드매칭 로드 실패]: 해당 경로에 quick.json 파일이 없습니다!")
 
 def get_verb_forms(verb):
     if verb in IRREGULAR_VERBS: return set(IRREGULAR_VERBS[verb])
@@ -51,21 +60,31 @@ def build_phrasal_regex(term, pos):
     return rf"(?:\b(?:{get_verb_pattern(first)}){gap}\s+{re.escape(last)}\b|\b{re.escape(first)}{gap}\s+(?:{get_verb_pattern(last)})\b)"
 
 def init_vector_db():
+    print(f"🔍 [디버그] 사전(TXT) 찾는 폴더: {os.path.abspath(DATA_DIR)}")
+    
     if qdrant.collection_exists(collection_name=COLLECTION_NAME):
         qdrant.delete_collection(collection_name=COLLECTION_NAME)
     qdrant.recreate_collection(
         collection_name=COLLECTION_NAME,
         vectors_config=VectorParams(size=embed_model.get_sentence_embedding_dimension(), distance=Distance.COSINE),
     )
-    if os.path.exists("verbs.txt"):
-        with open("verbs.txt", "r", encoding="utf-8") as f:
+    
+    verbs_path = os.path.join(DATA_DIR, "verbs.txt")
+    if os.path.exists(verbs_path):
+        with open(verbs_path, "r", encoding="utf-8") as f:
             for line in f:
                 parts = [p.strip() for p in line.split("|")]
                 if len(parts) >= 2: IRREGULAR_VERBS[parts[0].lower()] = set(parts)
+        print(f"✅ [동사 로드 성공]: verbs.txt 적용 완료.")
+    else:
+        print(f"⚠️ [동사 로드 실패]: {verbs_path} 없음.")
 
-    DATA_DIR = "/sgl-workspace/sglang/data"
-    if not os.path.exists(DATA_DIR): return
+    if not os.path.exists(DATA_DIR): 
+        print(f"❌ [사전 로드 실패]: {DATA_DIR} 폴더 자체가 없습니다!")
+        return
+        
     files = [f for f in glob.glob(os.path.join(DATA_DIR, "*.txt")) if "verbs.txt" not in f]
+    print(f"🔍 [디버그] 찾은 사전 파일들: {files}")
     
     points, point_id, loaded_data = [], 0, []
     for path in files:
@@ -92,7 +111,9 @@ def init_vector_db():
             points.append(PointStruct(id=point_id + i, vector=vector, payload=payload))
         point_id += len(vectors)
     
-    if points: qdrant.upsert(collection_name=COLLECTION_NAME, points=points)
+    if points: 
+        qdrant.upsert(collection_name=COLLECTION_NAME, points=points)
+        print(f"✅ [사전 벡터 DB 완료]: 총 {len(points)}개 인코딩 완료.")
 
 def retrieve_hybrid(user_input, last_active_domain, top_k=4):
     clean_input = re.sub(r'[^a-z0-9\s]', '', user_input.lower()).strip()
