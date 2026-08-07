@@ -29,7 +29,9 @@ def init_exact_matches():
     
     if os.path.exists(json_path):
         with open(json_path, "r", encoding="utf-8") as f:
-            EXACT_MATCH_DICT = json.load(f)
+            loaded_data = json.load(f)
+            EXACT_MATCH_DICT.clear()              # 기존 깡통 비우기
+            EXACT_MATCH_DICT.update(loaded_data)  # 새로 할당하지 않고 내용물만 채워넣기 (핵심)
         print(f"✅ [하드매칭 로드 성공]: {len(EXACT_MATCH_DICT)}개 단어 장전 완료.")
     else:
         print(f"❌ [하드매칭 로드 실패]: 해당 경로에 quick.json 파일이 없습니다!")
