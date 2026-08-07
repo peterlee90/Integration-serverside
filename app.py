@@ -1,0 +1,127 @@
+import sys
+import re
+from collections import deque
+from contextlib import asynccontextmanager
+import uvicorn
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse, JSONResponse
+from pydantic import BaseModel
+import contractions
+
+# 분리한 모듈 임포트
+from nlp_db import init_exact_matches, init_vector_db, retrieve_hybrid, EXACT_MATCH_DICT
+from llm_service import (
+    SYSTEM_PROMPT, get_user_prompt, fix_chinese_part, generate_reply_suggestions, 
+    LLM_CLIENT, MODEL_NAME, tokenizer
+)
+
+if sys.stdin: sys.stdin.reconfigure(encoding='utf-8', errors='ignore')
+if sys.stdout: sys.stdout.reconfigure(encoding='utf-8', errors='ignore')
+
+CONVO_HISTORY = deque(maxlen=3)
+LAST_ACTIVE_DOMAIN = "league"
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_vector_db()
+    init_exact_matches()
+    yield
+
+app = FastAPI(lifespan=lifespan)
+
+class TranslationRequest(BaseModel):
+    text: str
+
+@app.post("/translate/stream")
+async def translate_stream(payload: TranslationRequest):
+    global LAST_ACTIVE_DOMAIN
+    user_input = payload.text.strip()
+    norm_input = contractions.fix(user_input.lower()).strip()
+    norm_input = re.sub(r'[^a-z0-9\s]', '', norm_input).strip()
+    
+    if norm_input in EXACT_MATCH_DICT:
+        async def fast_response():
+            yield f"data: {EXACT_MATCH_DICT[norm_input]}\n\n"
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(fast_response(), media_type="text/event-stream")
+
+    resolved_matches, LAST_ACTIVE_DOMAIN = retrieve_hybrid(user_input, LAST_ACTIVE_DOMAIN)
+    
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    for turn in CONVO_HISTORY:
+        messages.append({"role": "user", "content": turn["user"]})
+        messages.append({"role": "assistant", "content": turn["assistant"]})
+    messages.append({"role": "user", "content": get_user_prompt(user_input, resolved_matches)})
+
+    raw_prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, enable_thinking=False)
+
+    async def event_generator():
+        response_stream = await LLM_CLIENT.completions.create(
+            model=MODEL_NAME, prompt=raw_prompt, temperature=0.1, max_tokens=100, extra_body={"enable_thinking": False}, stream=True
+        )
+
+        full_chunks = []
+        is_thinking = False
+        buffer, chinese_buffer = "", ""
+
+        async for chunk in response_stream:
+            if chunk.choices and chunk.choices[0].text:
+                buffer += chunk.choices[0].text
+                if "<think>" in buffer and not is_thinking: is_thinking = True
+                if is_thinking:
+                    if "</think>" in buffer:
+                        is_thinking = False
+                        buffer = buffer.split("</think>", 1)[-1]
+                    else: continue
+
+                if not is_thinking and buffer:
+                    if buffer.endswith("<") or buffer.endswith("<th"): continue
+                    
+                    if chinese_buffer or re.search(r'[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]', buffer):
+                        chinese_buffer += buffer
+                        buffer = ""
+                        match_non = re.search(r'[가-힣a-zA-Z]', chinese_buffer)
+                        if match_non:
+                            idx = match_non.start()
+                            ch_part, kor_part = chinese_buffer[:idx], chinese_buffer[idx:]
+                            
+                            if ch_part.strip():
+                                prefix = "".join(full_chunks).strip()
+                                korean_fix = await fix_chinese_part(prefix, ch_part)
+                                yield f"data: {korean_fix} \n\n"
+                                full_chunks.append(f"{korean_fix} ")
+                                
+                            yield f"data: {kor_part}\n\n"
+                            full_chunks.append(kor_part)
+                            chinese_buffer = ""
+                    else:
+                        yield f"data: {buffer}\n\n"
+                        full_chunks.append(buffer)
+                        buffer = ""
+
+        if chinese_buffer.strip():
+            korean_fix = await fix_chinese_part("".join(full_chunks).strip(), chinese_buffer)
+            yield f"data: {korean_fix} \n\n"
+            full_chunks.append(f"{korean_fix} ")
+        elif chinese_buffer:
+            yield f"data: {chinese_buffer}\n\n"
+            full_chunks.append(chinese_buffer)
+
+        yield "data: [DONE]\n\n"
+        
+        # 대화 기록 업데이트 (답변 제안용)
+        clean_translation = "".join(full_chunks).strip()
+        CONVO_HISTORY.append({"user": user_input, "assistant": clean_translation})
+        print(f"💬 [LLM 응답] {clean_translation}")
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+# --- 새로운 답변 제안 API ---
+@app.post("/suggest")
+async def suggest_replies():
+    """최근 대화를 기반으로 제안된 답변 2개 반환"""
+    suggestions = await generate_reply_suggestions(CONVO_HISTORY)
+    return JSONResponse(content={"suggestions": suggestions})
+
+if __name__ == "__main__":
+    uvicorn.run("app:app", host="0.0.0.0", port=8081, reload=True)
