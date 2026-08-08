@@ -30,7 +30,6 @@ async def fix_chinese_part(prefix_text, chinese_text):
     return response.choices[0].text.strip()
 
 async def generate_reply_suggestions(history):
-    # 대화 이력이 전혀 없을 때 → 첫인사 제안
     if not history:
         return {
             "summary": "대화 시작 전",
@@ -40,15 +39,16 @@ async def generate_reply_suggestions(history):
             ]
         }
 
-    # 영어 대화 이력을 텍스트로 변환 (User/Bot 포맷)
+    # "me"는 나(사용자), "remote"는 상대방으로 매핑하여 시간순으로 나열
     history_text = "\n".join([
-        f"User: {t['user']}\nBot: {t['assistant']}" for t in history
+        f"{'나' if t['role'] == 'me' else '상대방'}: {t['text']}" for t in history
     ])
 
     prompt = f"""
-You are analyzing a short English conversation. Do the following:
+You are analyzing a short English conversation between '나(Me)' and '상대방(Remote)'. 
+Do the following:
 1. Write a one-sentence summary of the conversation in Korean.
-2. Suggest 2 likely next replies that the User might say in English, along with their Korean translations.
+2. The turn has now passed to '나(Me)'. Suggest 2 likely next replies that '나(Me)' might say in English, along with their Korean translations.
 
 Conversation history:
 {history_text}
@@ -66,6 +66,7 @@ Output strictly as JSON:
     raw_prompt = tokenizer.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
     )
+    
     try:
         response = await LLM_CLIENT.completions.create(
             model=MODEL_NAME,
@@ -74,13 +75,14 @@ Output strictly as JSON:
             max_tokens=200,
             extra_body={"enable_thinking": False}
         )
+        # JSON 포맷만 안전하게 파싱
         return json.loads(response.choices[0].text.strip())
-    except:
-        # LLM 실패 시 안전장치
+    except Exception as e:
+        print(f"Suggestion Error: {e}")
         return {
             "summary": "대화 내용을 요약할 수 없습니다.",
             "suggestions": [
-                {"en": "I'm good, you?", "ko": "잘 지내, 너는?"},
-                {"en": "Could you tell me more?", "ko": "좀 더 자세히 설명해줄래?"}
+                {"en": "I agree.", "ko": "동의해."},
+                {"en": "What do you mean?", "ko": "무슨 뜻이야?"}
             ]
         }
