@@ -28,18 +28,17 @@ async def fix_chinese_part(prefix_text, chinese_text):
         model=MODEL_NAME, prompt=raw_prompt, temperature=0.1, max_tokens=50, extra_body={"enable_thinking": False}
     )
     return response.choices[0].text.strip()
-
 async def generate_reply_suggestions(history):
     if not history:
         return {
             "summary": "대화 시작 전",
             "suggestions": [
                 {"en": "Hi, how are you?", "ko": "안녕, 잘 지내?"},
-                {"en": "Nice to meet you!", "ko": "만나서 반가워!"}
+                {"en": "Nice to meet you!", "ko": "만나서 반가워!"},
+                {"en": "What are you up to?", "ko": "뭐 하고 있어?"}
             ]
         }
 
-    # "me"는 나(사용자), "remote"는 상대방으로 매핑하여 시간순으로 나열
     history_text = "\n".join([
         f"{'나' if t['role'] == 'me' else '상대방'}: {t['text']}" for t in history
     ])
@@ -48,7 +47,7 @@ async def generate_reply_suggestions(history):
 You are analyzing a short English conversation between '나(Me)' and '상대방(Remote)'. 
 Do the following:
 1. Write a one-sentence summary of the conversation in Korean.
-2. The turn has now passed to '나(Me)'. Suggest 2 likely next replies that '나(Me)' might say in English, along with their Korean translations.
+2. The turn has now passed to '나(Me)'. Suggest 3 likely next replies that '나(Me)' might say in English, along with their Korean translations.
 
 Conversation history:
 {history_text}
@@ -58,7 +57,8 @@ Output strictly as JSON:
   "summary": "한국어 요약 문장",
   "suggestions": [
     {{"en": "English reply 1", "ko": "한국어 번역 1"}},
-    {{"en": "English reply 2", "ko": "한국어 번역 2"}}
+    {{"en": "English reply 2", "ko": "한국어 번역 2"}},
+    {{"en": "English reply 3", "ko": "한국어 번역 3"}}
   ]
 }}
 """
@@ -72,10 +72,9 @@ Output strictly as JSON:
             model=MODEL_NAME,
             prompt=raw_prompt,
             temperature=0.3,
-            max_tokens=200,
+            max_tokens=250,  # 3개를 만들어야 하므로 토큰 수 증가
             extra_body={"enable_thinking": False}
         )
-        # JSON 포맷만 안전하게 파싱
         return json.loads(response.choices[0].text.strip())
     except Exception as e:
         print(f"Suggestion Error: {e}")
@@ -83,6 +82,7 @@ Output strictly as JSON:
             "summary": "대화 내용을 요약할 수 없습니다.",
             "suggestions": [
                 {"en": "I agree.", "ko": "동의해."},
-                {"en": "What do you mean?", "ko": "무슨 뜻이야?"}
+                {"en": "What do you mean?", "ko": "무슨 뜻이야?"},
+                {"en": "Let's change the subject.", "ko": "주제를 바꾸자."}
             ]
         }
