@@ -1,6 +1,6 @@
 import sys
 import re
-from collections import deque
+from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI
@@ -8,7 +8,6 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 import contractions
 
-# 분리한 모듈 임포트
 from nlp_db import init_exact_matches, init_vector_db, retrieve_hybrid, EXACT_MATCH_DICT
 from llm_service import (
     SYSTEM_PROMPT, get_user_prompt, fix_chinese_part, generate_reply_suggestions, 
@@ -18,7 +17,8 @@ from llm_service import (
 if sys.stdin: sys.stdin.reconfigure(encoding='utf-8', errors='ignore')
 if sys.stdout: sys.stdout.reconfigure(encoding='utf-8', errors='ignore')
 
-CONVO_HISTORY = deque(maxlen=3)
+# 방별 대화 기록 관리 (번역 문맥용)
+ROOM_HISTORIES = defaultdict(lambda: deque(maxlen=3))
 LAST_ACTIVE_DOMAIN = "league"
 
 @asynccontextmanager
@@ -30,17 +30,19 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 class TranslationRequest(BaseModel):
+    room_id: str
     text: str
 
-
-# 🔄 새로 추가된 모델
 class SuggestRequest(BaseModel):
-    history: list[dict]   # [{"user": "영어", "assistant": "영어"}, ...]
-
+    summary: dict          
+    latest_text: str       
+    speaker: str           
+    need_suggestions: bool 
 
 @app.post("/translate/stream")
 async def translate_stream(payload: TranslationRequest):
     global LAST_ACTIVE_DOMAIN
+    room_id = payload.room_id
     user_input = payload.text.strip()
     norm_input = contractions.fix(user_input.lower()).strip()
     norm_input = re.sub(r'[^a-z0-9\s]', '', norm_input).strip()
@@ -54,9 +56,11 @@ async def translate_stream(payload: TranslationRequest):
     resolved_matches, LAST_ACTIVE_DOMAIN = retrieve_hybrid(user_input, LAST_ACTIVE_DOMAIN)
     
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    for turn in CONVO_HISTORY:
+    
+    for turn in ROOM_HISTORIES[room_id]:
         messages.append({"role": "user", "content": turn["user"]})
         messages.append({"role": "assistant", "content": turn["assistant"]})
+        
     messages.append({"role": "user", "content": get_user_prompt(user_input, resolved_matches)})
 
     raw_prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, enable_thinking=False)
@@ -115,18 +119,19 @@ async def translate_stream(payload: TranslationRequest):
 
         yield "data: [DONE]\n\n"
         
-        # 대화 기록 업데이트 (답변 제안용)
         clean_translation = "".join(full_chunks).strip()
-        CONVO_HISTORY.append({"user": user_input, "assistant": clean_translation})
-        print(f"💬 [LLM 응답] {clean_translation}")
+        ROOM_HISTORIES[room_id].append({"user": user_input, "assistant": clean_translation})
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
-# 🔄 완전히 새로 작성된 /suggest 엔드포인트
 @app.post("/suggest")
 async def suggest_replies(payload: SuggestRequest):
-    """클라이언트가 보낸 영어 대화 히스토리로 요약 + 답변 제안 반환 (다중 사용자 OK)"""
-    result = await generate_reply_suggestions(payload.history)
+    result = await generate_reply_suggestions(
+        prev_summary=payload.summary,
+        latest_text=payload.latest_text,
+        speaker=payload.speaker,
+        need_suggestions=payload.need_suggestions
+    )
     return JSONResponse(content=result)
 
 if __name__ == "__main__":
