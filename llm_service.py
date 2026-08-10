@@ -28,40 +28,43 @@ async def fix_chinese_part(prefix_text, chinese_text):
         model=MODEL_NAME, prompt=raw_prompt, temperature=0.1, max_tokens=50, extra_body={"enable_thinking": False}
     )
     return response.choices[0].text.strip()
-async def generate_reply_suggestions(history):
-    if not history:
-        return {
-            "summary": "대화 시작 전",
-            "suggestions": [
-                {"en": "Hi, how are you?", "ko": "안녕, 잘 지내?"},
-                {"en": "Nice to meet you!", "ko": "만나서 반가워!"},
-                {"en": "What are you up to?", "ko": "뭐 하고 있어?"}
-            ]
-        }
 
-    history_text = "\n".join([
-        f"{'나' if t['role'] == 'me' else '상대방'}: {t['text']}" for t in history
-    ])
+# 🔄 롤링 요약 및 조건부 제안 생성으로 전면 수정
+async def generate_reply_suggestions(prev_summary: dict, latest_text: str, speaker: str, need_suggestions: bool):
+    speaker_label = "Me" if speaker == "me" else "Remote"
+    
+    # 1. 공통 프롬프트 (요약 갱신)
+    prompt = f"""[Current Status]
+Remote: {json.dumps(prev_summary.get("remote", []), ensure_ascii=False)}
+Me: {json.dumps(prev_summary.get("me", []), ensure_ascii=False)}
 
-    prompt = f"""
-You are analyzing a short English conversation between '나(Me)' and '상대방(Remote)'. 
-Do the following:
-1. Write a one-sentence summary of the conversation in Korean.
-2. The turn has now passed to '나(Me)'. Suggest 3 likely next replies that '나(Me)' might say in English, along with their Korean translations.
+[Latest Message ({speaker_label})]
+"{latest_text}"
 
-Conversation history:
-{history_text}
-
-Output strictly as JSON:
-{{
-  "summary": "한국어 요약 문장",
-  "suggestions": [
-    {{"en": "English reply 1", "ko": "한국어 번역 1"}},
-    {{"en": "English reply 2", "ko": "한국어 번역 2"}},
-    {{"en": "English reply 3", "ko": "한국어 번역 3"}}
-  ]
-}}
+Task:
+1. Update the [Current Status] based on the [Latest Message] using VERY short Korean keywords. Do not hallucinate.
 """
+
+    # 2. 제안 요청 여부에 따른 출력 스키마 분기
+    if need_suggestions:
+        prompt += """2. Suggest 3 natural English replies for 'Me' to respond to 'Remote', along with Korean translations.
+
+Output STRICTLY as JSON:
+{
+  "summary": {"remote": ["keyword1"], "me": ["keyword2"]},
+  "suggestions": [
+    {"en": "reply 1", "ko": "번역 1"},
+    {"en": "reply 2", "ko": "번역 2"},
+    {"en": "reply 3", "ko": "번역 3"}
+  ]
+}"""
+    else:
+        prompt += """
+Output STRICTLY as JSON:
+{
+  "summary": {"remote": ["keyword1"], "me": ["keyword2"]}
+}"""
+
     messages = [{"role": "user", "content": prompt}]
     raw_prompt = tokenizer.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
@@ -71,18 +74,33 @@ Output strictly as JSON:
         response = await LLM_CLIENT.completions.create(
             model=MODEL_NAME,
             prompt=raw_prompt,
-            temperature=0.3,
-            max_tokens=250,  # 3개를 만들어야 하므로 토큰 수 증가
+            temperature=0.2, # 환각 방지를 위해 낮춤
+            max_tokens=250 if need_suggestions else 100, 
             extra_body={"enable_thinking": False}
         )
-        return json.loads(response.choices[0].text.strip())
-    except Exception as e:
-        print(f"Suggestion Error: {e}")
-        return {
-            "summary": "대화 내용을 요약할 수 없습니다.",
-            "suggestions": [
+        
+        result_json = json.loads(response.choices[0].text.strip())
+        
+        # 방어 코드 (포맷팅 보장)
+        if not need_suggestions:
+            result_json["suggestions"] = []
+        elif need_suggestions and "suggestions" not in result_json:
+            result_json["suggestions"] = [
                 {"en": "I agree.", "ko": "동의해."},
                 {"en": "What do you mean?", "ko": "무슨 뜻이야?"},
                 {"en": "Let's change the subject.", "ko": "주제를 바꾸자."}
             ]
-        }
+            
+        return result_json
+        
+    except Exception as e:
+        print(f"Suggestion Error: {e}")
+        # 에러 시 기존 요약 유지 및 안전한 폴백 반환
+        fallback = {"summary": prev_summary, "suggestions": []}
+        if need_suggestions:
+            fallback["suggestions"] = [
+                {"en": "I agree.", "ko": "동의해."},
+                {"en": "What do you mean?", "ko": "무슨 뜻이야?"},
+                {"en": "Let's change the subject.", "ko": "주제를 바꾸자."}
+            ]
+        return fallback
