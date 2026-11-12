@@ -9,10 +9,10 @@ DATA_DIR = "data"
 QUICK_MATCH_FILE = "quick.json"
 VERBS_FILE = "verbs.txt"
 
-# ---- LLM (vLLM OpenAI 호환 서버) ----
+# ---- LLM (SGLang OpenAI 호환 서버) ----
 LLM_BASE_URL = "http://localhost:8000/v1"
 LLM_API_KEY = "EMPTY"
-MODEL_NAME = "Qwen/Qwen3-8B-FP8"
+MODEL_NAME = "kakaocorp/kanana-1.5-8b-instruct-2505"   # 토크나이저 + 요청 둘 다 (어댑터 붙이면 나눔)
 
 # ---- 임베딩 / 벡터 DB ----
 EMBED_MODEL_NAME = "BAAI/bge-small-en-v1.5"
