@@ -1,4 +1,4 @@
-"""LLM(vLLM OpenAI 호환 서버) 연결과 호출 헬퍼."""
+"""LLM(SGLang OpenAI 호환 서버) 연결과 호출 헬퍼."""
 from openai import AsyncOpenAI
 from transformers import AutoTokenizer
 
@@ -15,16 +15,22 @@ def build_prompt(messages: list) -> str:
     )
 
 
-async def complete(prompt: str, *, temperature: float, max_tokens: int, stream: bool = False):
-    """completions 호출. stream=True 면 비동기 스트림을 돌려준다."""
-    stream_arg = {"stream": True} if stream else {}
+async def complete(
+    prompt: str, *, temperature: float, max_tokens: int, stream: bool = False, stop: list | None = None
+):
+    """completions 호출. stream=True 면 비동기 스트림, stop 문자열이 나오면 생성 중단."""
+    extra = {}
+    if stream:
+        extra["stream"] = True
+    if stop:
+        extra["stop"] = stop
     return await LLM_CLIENT.completions.create(
         model=MODEL_NAME,
         prompt=prompt,
         temperature=temperature,
         max_tokens=max_tokens,
         extra_body={"enable_thinking": False},
-        **stream_arg,
+        **extra,
     )
 
 
