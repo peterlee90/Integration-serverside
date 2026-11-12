@@ -1,27 +1,30 @@
 """LLM 에 보내는 프롬프트 모음.
 
-문구를 한 글자라도 바꾸면 모델 출력이 달라질 수 있으니 주의.
+문구를 바꾸면 모델 출력이 달라지니, 바꾼 뒤엔 꼭 실제 문장으로 확인.
 """
 import json
-import textwrap
 
-# 주의: r"""\ 로 시작해서 실제 값은 '\' + 줄바꿈으로 시작하고, 들여쓰기도 안 지워진다.
-#       지금 이 상태로 잘 동작하고 있어서 원본 그대로 둠.
-SYSTEM_PROMPT = textwrap.dedent(r"""\
-    # Role
-    EN-KR Translator.
-    # Rules
-    [CRITICAL] Apply [Glossary] definitions.
-""")
+# 번역 규칙. 출력은 한 줄 "번역1 / 번역2" (줄바꿈에서 생성이 끊김 → config.TRANSLATE_STOP)
+SYSTEM_PROMPT = (
+    "너는 영어를 한국어로 옮기는 실시간 자막 번역기다.\n"
+    "규칙:\n"
+    "1. 자연스러운 한국어 번역 2개를 한 줄에 ' / '로 구분해서 출력한다.\n"
+    "2. 번역 말고는 아무것도 쓰지 않는다. (원문, 설명, 참고, 따옴표, 번호, 줄바꿈 금지)\n"
+    "3. [사전]이 주어지면 그 단어는 반드시 사전의 뜻으로 번역한다.\n"
+    "\n"
+    "예시\n"
+    "입력: You gotta be kidding me.\n"
+    "출력: 농담이시죠? / 설마 진심이에요?"
+)
 
 
 def translation_prompt(sentence: str, matches: list) -> str:
-    """번역 요청 본문. 사전 매칭이 있으면 [사전] 블록을 앞에 붙인다."""
-    base = f"원문: {sentence.strip()}\n번역:"
+    """번역 요청 본문: (사전 블록) + 원문. 모델이 따라 쓰지 않게 '원문:/번역:' 표시는 안 붙인다."""
+    sentence = sentence.strip()
     if not matches:
-        return base
+        return sentence
     lines = [f"- {m['term']}: {m['meaning']}" for m in matches]
-    return "[사전]\n" + "\n".join(lines) + f"\n{base}"
+    return "[사전]\n" + "\n".join(lines) + f"\n\n{sentence}"
 
 
 def chinese_fix_prompt(prefix_text: str, chinese_text: str) -> str:
