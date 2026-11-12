@@ -10,7 +10,9 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from config import DEFAULT_DOMAIN, HISTORY_TURNS, TRANSLATE_MAX_TOKENS, TRANSLATE_TEMPERATURE
+from config import (
+    DEFAULT_DOMAIN, HISTORY_TURNS, TRANSLATE_MAX_TOKENS, TRANSLATE_STOP, TRANSLATE_TEMPERATURE,
+)
 from lexicon import quick_match
 from lexicon.normalize import normalize_text
 from lexicon.retrieve import retrieve_hybrid
@@ -95,7 +97,11 @@ async def _stream_translation(room_id: str, user_input: str, prompt: str, t0: fl
     logger.info("[LLM] 스트림 시작")
 
     stream = await complete(
-        prompt, temperature=TRANSLATE_TEMPERATURE, max_tokens=TRANSLATE_MAX_TOKENS, stream=True
+        prompt,
+        temperature=TRANSLATE_TEMPERATURE,
+        max_tokens=TRANSLATE_MAX_TOKENS,
+        stream=True,
+        stop=TRANSLATE_STOP,
     )
     cleaner = TranslationStreamCleaner(fix_chinese_part)
 
