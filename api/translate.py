@@ -1,6 +1,6 @@
 """POST /translate/stream — 영→한 번역 (SSE 스트리밍).
 
-순서: quick.json 정확 매칭 → (실패 시) 사전 검색 → LLM 스트리밍
+순서: quick.json 정확 매칭 → (실패 시) 사전 검색 → LLM 스트리밍 (LoRA 어댑터)
 """
 import logging
 import time
@@ -11,7 +11,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from config import (
-    DEFAULT_DOMAIN, HISTORY_TURNS, TRANSLATE_MAX_TOKENS, TRANSLATE_STOP, TRANSLATE_TEMPERATURE,
+    DEFAULT_DOMAIN, HISTORY_TURNS, TRANSLATE_MAX_TOKENS, TRANSLATE_MODEL_NAME,
+    TRANSLATE_STOP, TRANSLATE_TEMPERATURE,
 )
 from lexicon import quick_match
 from lexicon.normalize import normalize_text
@@ -84,9 +85,10 @@ async def translate_stream(payload: TranslationRequest):
 
 
 def _build_messages(room_id: str, user_input: str, matches: list) -> list:
+    """시스템 + 이전 턴들 + 이번 문장. user 는 전부 학습 때 모양('번역할 문장: ...')으로."""
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     for turn in ROOM_HISTORIES[room_id]:
-        messages.append({"role": "user", "content": turn["user"]})
+        messages.append({"role": "user", "content": translation_prompt(turn["user"], [])})
         messages.append({"role": "assistant", "content": turn["assistant"]})
     messages.append({"role": "user", "content": translation_prompt(user_input, matches)})
     return messages
@@ -94,7 +96,7 @@ def _build_messages(room_id: str, user_input: str, matches: list) -> list:
 
 async def _stream_translation(room_id: str, user_input: str, prompt: str, t0: float):
     llm_t0 = time.time()
-    logger.info("[LLM] 스트림 시작")
+    logger.info(f"[LLM] 스트림 시작 (model={TRANSLATE_MODEL_NAME})")
 
     stream = await complete(
         prompt,
@@ -102,6 +104,7 @@ async def _stream_translation(room_id: str, user_input: str, prompt: str, t0: fl
         max_tokens=TRANSLATE_MAX_TOKENS,
         stream=True,
         stop=TRANSLATE_STOP,
+        model=TRANSLATE_MODEL_NAME,
     )
     cleaner = TranslationStreamCleaner(fix_chinese_part)
 
