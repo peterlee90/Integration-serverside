@@ -1,30 +1,29 @@
 """LLM 에 보내는 프롬프트 모음.
 
-문구를 바꾸면 모델 출력이 달라지니, 바꾼 뒤엔 꼭 실제 문장으로 확인.
+번역 프롬프트(SYSTEM_PROMPT, HINT_LABEL, TEXT_LABEL)는 LoRA 어댑터를 학습할 때 쓴 것과
+글자 하나까지 같아야 한다. 바꾸면 어댑터 효과가 떨어지니, 바꾸려면 다시 학습해야 함.
 """
 import json
 
-# 번역 규칙. 출력은 한 줄 "번역1 / 번역2" (줄바꿈에서 생성이 끊김 → config.TRANSLATE_STOP)
-SYSTEM_PROMPT = (
-    "너는 영어를 한국어로 옮기는 실시간 자막 번역기다.\n"
-    "규칙:\n"
-    "1. 자연스러운 한국어 번역 2개를 한 줄에 ' / '로 구분해서 출력한다.\n"
-    "2. 번역 말고는 아무것도 쓰지 않는다. (원문, 설명, 참고, 따옴표, 번호, 줄바꿈 금지)\n"
-    "3. [사전]이 주어지면 그 단어는 반드시 사전의 뜻으로 번역한다.\n"
-    "\n"
-    "예시\n"
-    "입력: You gotta be kidding me.\n"
-    "출력: 농담이시죠? / 설마 진심이에요?"
-)
+# 학습 때 시스템 문구 그대로 (출력: 반말 번역 1줄)
+SYSTEM_PROMPT = ("너는 번역기야. 사용자가 보낸 영어 문장에 대답하지 말고, 그 문장을 친구한테 말하듯 "
+                 "자연스러운 한국어 반말로 번역해. 존댓말 쓰지 마. 영어 단어 남기지 마. "
+                 "원문 뜻을 빠뜨리거나 없는 말을 덧붙이지 마. 원문이 yes/yeah일 때만 '응'으로. 번역문만 출력해.")
+HINT_LABEL = "참고 표현: "
+TEXT_LABEL = "번역할 문장: "
 
 
 def translation_prompt(sentence: str, matches: list) -> str:
-    """번역 요청 본문: (사전 블록) + 원문. 모델이 따라 쓰지 않게 '원문:/번역:' 표시는 안 붙인다."""
+    """번역 요청 본문 (학습 때 user 모양).
+
+    항상 '번역할 문장: ...', 참고할 게 있으면 그 위 줄에 '참고 표현: a = 가 / b = 나'.
+    matches 는 사전 검색 결과 [{"term": ..., "meaning": ...}, ...]
+    """
     sentence = sentence.strip()
-    if not matches:
-        return sentence
-    lines = [f"- {m['term']}: {m['meaning']}" for m in matches]
-    return "[사전]\n" + "\n".join(lines) + f"\n\n{sentence}"
+    head = ""
+    if matches:
+        head = HINT_LABEL + " / ".join(f"{m['term']} = {m['meaning']}" for m in matches) + "\n"
+    return head + TEXT_LABEL + sentence
 
 
 def chinese_fix_prompt(prefix_text: str, chinese_text: str) -> str:
