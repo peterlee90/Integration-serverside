@@ -103,3 +103,7 @@ def get_domain(room_id: str) -> str:
 def set_domain(room_id: str, domain: str):
     if domain:
         get_room(room_id).domain = domain
+
+def set_domain(room_id: str, domain: str):
+    if domain:
+        get_room(room_id).domain = domain
