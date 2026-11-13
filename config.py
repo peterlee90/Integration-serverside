@@ -16,7 +16,7 @@ MODEL_NAME = "kakaocorp/kanana-1.5-8b-instruct-2505"   # 베이스: 토크나이
 
 # 번역에 쓸 LoRA 어댑터 이름 (SGLang --lora-paths 의 "이름=경로" 에서 이름 부분)
 # "" 로 두면 어댑터 없이 베이스로 번역
-TRANSLATE_ADAPTER = "game"
+TRANSLATE_ADAPTER = "daily"
 TRANSLATE_MODEL_NAME = f"{MODEL_NAME}:{TRANSLATE_ADAPTER}" if TRANSLATE_ADAPTER else MODEL_NAME
 
 # ---- 임베딩 / 벡터 DB ----
