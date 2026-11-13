@@ -14,6 +14,7 @@ import uvicorn  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 
 from api.suggest import router as suggest_router  # noqa: E402
+from api.suggest_stream import router as suggest_stream_router  # noqa: E402
 from api.translate import router as translate_router  # noqa: E402
 from config import HOST, PORT  # noqa: E402
 from lexicon import quick_match  # noqa: E402
@@ -40,6 +41,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 app.include_router(translate_router)
 app.include_router(suggest_router)
+app.include_router(suggest_stream_router)
 
 
 if __name__ == "__main__":
