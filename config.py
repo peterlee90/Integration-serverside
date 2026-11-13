@@ -54,3 +54,15 @@ SUGGEST_JSON_SCHEMA = True   # SGLang 구조화 출력으로 JSON 강제 (에러
 # ---- 제안 카드를 눌렀을 때 이어 붙이는 문장 (POST /suggest/expand) ----
 EXPAND_MAX_SENTENCES = 2     # 카드 문장 뒤에 덧붙이는 문장 수 (카드 1 + 이 값 = 최대 3문장)
 EXPAND_MAX_TOKENS = 120      # 덧붙이는 문장(영어 + 한국어 뜻) 생성 한도
+
+# ---- "내가 하고 싶은 말" (POST /say/stream): 한국어 → 상황에 맞는 영어 ----
+SAY_PROVIDERS = ["kanana", "claude"]   # 카드로 보여줄 모델들 (하나만 쓰려면 하나만 남김)
+SAY_MAX_SENTENCES = 2                  # 영어 문장 수 한도
+SAY_MAX_TOKENS = 150                   # 영어 + 한국어 뜻 생성 한도
+SAY_TEMPERATURE = 0.3
+
+# Claude API. 키는 여기 적지 않는다 → 서버 환경변수 ANTHROPIC_API_KEY 로만 넣는다
+CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
+CLAUDE_API_VERSION = "2023-06-01"
+CLAUDE_MODEL = "claude-haiku-5-5"      # 빠르고 싼 모델. 품질을 올리려면 "claude-sonnet-5-5"
+CLAUDE_TIMEOUT_SEC = 20
