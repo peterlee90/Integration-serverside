@@ -1,32 +1,90 @@
-"""LLM 에 보내는 프롬프트 모음.
+"""요약 갱신 + 답변 제안 프롬프트.
 
-번역 프롬프트(SYSTEM_PROMPT, HINT_LABEL, TEXT_LABEL)는 LoRA 어댑터를 학습할 때 쓴 것과
-글자 하나까지 같아야 한다. 바꾸면 어댑터 효과가 떨어지니, 바꾸려면 다시 학습해야 함.
+입력: 지금까지의 요약(보는 사람 기준 remote/me) + 방의 최근 대화 턴 + 마지막 메시지
+출력: JSON {"summary": {...}, "suggestions": [{"en", "ko"} x3]}
 """
-# 학습 때 시스템 문구 그대로 (출력: 반말 번역 1줄)
-SYSTEM_PROMPT = ("너는 번역기야. 사용자가 보낸 영어 문장에 대답하지 말고, 그 문장을 친구한테 말하듯 "
-                 "자연스러운 한국어 반말로 번역해. 존댓말 쓰지 마. 영어 단어 남기지 마. "
-                 "원문 뜻을 빠뜨리거나 없는 말을 덧붙이지 마. 원문이 yes/yeah일 때만 '응'으로. 번역문만 출력해.")
-HINT_LABEL = "참고 표현: "
-TEXT_LABEL = "번역할 문장: "
+import json
+
+from config import SUGGEST_MAX_WORDS, SUMMARY_MAX_KEYWORDS
+
+# SGLang 구조화 출력용 JSON 스키마 (config.SUGGEST_JSON_SCHEMA 가 True 일 때만 사용)
+_SUMMARY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "remote": {"type": "array", "items": {"type": "string"}},
+        "me": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["remote", "me"],
+}
+SUMMARY_ONLY_SCHEMA = {
+    "type": "object",
+    "properties": {"summary": _SUMMARY_SCHEMA},
+    "required": ["summary"],
+}
+WITH_SUGGESTIONS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": _SUMMARY_SCHEMA,
+        "suggestions": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "items": {
+                "type": "object",
+                "properties": {"en": {"type": "string"}, "ko": {"type": "string"}},
+                "required": ["en", "ko"],
+            },
+        },
+    },
+    "required": ["summary", "suggestions"],
+}
 
 
-def translation_prompt(sentence: str, matches: list) -> str:
-    """번역 요청 본문 (학습 때 user 모양).
+def format_turns(turns: list, user_id: str | None) -> str:
+    """대화 턴 → 'Me: ...' / 'Remote: ...' 줄들. 화자를 모르면 'Speaker'."""
+    lines = []
+    for t in turns:
+        if user_id and t.speaker == user_id:
+            who = "Me"
+        elif user_id and t.speaker != "unknown":
+            who = "Remote"
+        else:
+            who = "Speaker"
+        lines.append(f"{who}: {t.text}")
+    return "\n".join(lines) if lines else "(none)"
 
-    항상 '번역할 문장: ...', 참고할 게 있으면 그 위 줄에 '참고 표현: a = 가 / b = 나'.
-    matches 는 사전 검색 결과 [{"term": ..., "meaning": ...}, ...]
-    """
-    sentence = sentence.strip()
-    head = ""
-    if matches:
-        head = HINT_LABEL + " / ".join(f"{m['term']} = {m['meaning']}" for m in matches) + "\n"
-    return head + TEXT_LABEL + sentence
 
+def suggestion_prompt(summary: dict, turns_text: str, latest_text: str, speaker: str,
+                      need_suggestions: bool) -> str:
+    speaker_label = "Me" if speaker == "me" else "Remote"
+    remote = json.dumps(summary.get("remote", []), ensure_ascii=False)
+    me = json.dumps(summary.get("me", []), ensure_ascii=False)
 
-def chinese_fix_prompt(prefix_text: str, chinese_text: str) -> str:
-    """번역 중 섞여 나온 중국어를 앞 문장에 이어지게 한국어로 바꾸는 요청."""
-    return (
-        f"앞문장 '{prefix_text}'에 자연스럽게 이어지도록, "
-        f"중국어 '{chinese_text}'를 한국어로 번역해. 번역된 결과만 출력해."
-    )
+    prompt = f"""You help "Me" in a live English conversation with "Remote".
+
+[Summary so far]
+Remote: {remote}
+Me: {me}
+
+[Recent conversation]
+{turns_text}
+
+[Latest message ({speaker_label})]
+"{latest_text}"
+
+Task:
+1. Update the summary using VERY short Korean keywords (max {SUMMARY_MAX_KEYWORDS} per person). Keep important facts (plans, feelings, questions, names). Drop minor old ones. Do not invent anything.
+"""
+    if not need_suggestions:
+        return prompt + """
+Output ONLY this JSON:
+{"summary": {"remote": ["키워드"], "me": ["키워드"]}}"""
+
+    return prompt + f"""2. Suggest 3 replies that "Me" could say next to "Remote", based on the whole conversation and especially the latest message.
+- Make the 3 replies go in different directions: (a) agree or answer positively, (b) ask a follow-up question, (c) a different opinion, a decline, or a light change of topic.
+- If the latest message is a question, all 3 replies must answer it.
+- Each reply: ONE short spoken sentence, max {SUGGEST_MAX_WORDS} words, casual and natural, matching the mood of the conversation.
+- "ko": natural Korean meaning in casual speech (반말).
+
+Output ONLY this JSON:
+{{"summary": {{"remote": ["키워드"], "me": ["키워드"]}}, "suggestions": [{{"en": "...", "ko": "..."}}, {{"en": "...", "ko": "..."}}, {{"en": "...", "ko": "..."}}]}}"""
