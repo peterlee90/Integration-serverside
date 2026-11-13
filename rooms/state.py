@@ -59,8 +59,17 @@ def room_count() -> int:
 
 # ---------- 대화 턴 ----------
 def add_turn(room_id: str, speaker: str | None, text: str, translation: str) -> Turn:
-    turn = Turn(speaker=speaker or UNKNOWN, text=text, translation=translation, ts=time.time())
-    get_room(room_id).turns.append(turn)
+    """대화 턴 추가. 같은 사람의 같은 문장이 방금(최근 4턴 안) 이미 있으면 새로 넣지 않고
+    번역만 채운다 (번역 요청과 요약 요청이 같은 문장을 각각 알려 오기 때문)."""
+    speaker = speaker or UNKNOWN
+    turns = get_room(room_id).turns
+    for old in list(turns)[-4:]:
+        if old.speaker == speaker and old.text.strip() == text.strip():
+            if translation and not old.translation:
+                old.translation = translation
+            return old
+    turn = Turn(speaker=speaker, text=text, translation=translation, ts=time.time())
+    turns.append(turn)
     return turn
 
 
