@@ -1,7 +1,9 @@
 """LLM 보조 작업: 중국어 섞임 보정, 대화 요약 + 답변 제안."""
+import asyncio
 import json
 import logging
 import re
+import time
 
 from config import (
     FIX_MAX_TOKENS, FIX_TEMPERATURE, SUGGEST_JSON_SCHEMA,
@@ -10,7 +12,7 @@ from config import (
 from llm.client import build_prompt, complete_text
 from llm.prompts import chinese_fix_prompt
 from llm.suggest_prompts import (
-    SUMMARY_ONLY_SCHEMA, WITH_SUGGESTIONS_SCHEMA, format_turns, suggestion_prompt,
+    SUGGESTIONS_SCHEMA, SUMMARY_SCHEMA, format_turns, suggestion_prompt, summary_prompt,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,7 +52,8 @@ def _clean_summary(raw, prev: dict) -> dict:
         return prev
     out = {}
     for key in ("remote", "me"):
-        words = [str(w).strip() for w in raw.get(key, []) if str(w).strip()]
+        value = raw.get(key, [])
+        words = [str(w).strip() for w in value if str(w).strip()] if isinstance(value, list) else []
         out[key] = words[-SUMMARY_MAX_KEYWORDS:]
     return out
 
@@ -68,32 +71,53 @@ def _clean_suggestions(raw) -> list:
     return items[:3]
 
 
+async def _ask_json(name: str, content: str, max_tokens: int, schema: dict) -> dict:
+    """LLM 한 번 호출 → JSON. 걸린 시간과 출력 길이를 로그로 남긴다 (느린 쪽 찾기용)."""
+    t0 = time.time()
+    text = await complete_text(
+        _user_prompt(content), temperature=SUGGEST_TEMPERATURE, max_tokens=max_tokens,
+        json_schema=schema if SUGGEST_JSON_SCHEMA else None,
+    )
+    logger.info(f"[SUGGEST] {name} LLM {(time.time() - t0):.2f}s, 출력 {len(text)}자")
+    return _parse_json(text)
+
+
+async def _make_summary(prev: dict, turns_text: str, latest_text: str, speaker: str) -> tuple:
+    """(요약, 성공 여부). 실패하면 이전 요약 유지."""
+    try:
+        result = await _ask_json("요약", summary_prompt(prev, turns_text, latest_text, speaker),
+                                 SUMMARY_MAX_TOKENS, SUMMARY_SCHEMA)
+        return _clean_summary(result.get("summary"), prev), True
+    except Exception as e:
+        logger.warning(f"[SUGGEST] 요약 실패 → 이전 요약 유지: {type(e).__name__}: {e}")
+        return prev, False
+
+
+async def _make_suggestions(prev: dict, turns_text: str, latest_text: str, speaker: str) -> list:
+    """답장 3개. 실패하면 기본 답장."""
+    try:
+        result = await _ask_json("제안", suggestion_prompt(prev, turns_text, latest_text, speaker),
+                                 SUGGEST_MAX_TOKENS, SUGGESTIONS_SCHEMA)
+        return _clean_suggestions(result.get("suggestions"))
+    except Exception as e:
+        logger.warning(f"[SUGGEST] 제안 실패 → 기본 답장: {type(e).__name__}: {e}")
+        return _fallback_suggestions()
+
+
 async def generate_reply_suggestions(
     prev_summary: dict, turns: list, user_id: str | None,
     latest_text: str, speaker: str, need_suggestions: bool,
 ) -> dict:
-    """요약을 갱신하고, need_suggestions 면 답장 3개도 만든다. 실패하면 이전 요약 유지."""
-    content = suggestion_prompt(prev_summary, format_turns(turns, user_id),
-                                latest_text, speaker, need_suggestions)
-    prompt = _user_prompt(content)
-    max_tokens = SUGGEST_MAX_TOKENS if need_suggestions else SUMMARY_MAX_TOKENS
-    schema = None
-    if SUGGEST_JSON_SCHEMA:
-        schema = WITH_SUGGESTIONS_SCHEMA if need_suggestions else SUMMARY_ONLY_SCHEMA
+    """요약을 갱신하고, need_suggestions 면 답장 3개도 만든다.
 
-    try:
-        text = await complete_text(prompt, temperature=SUGGEST_TEMPERATURE,
-                                   max_tokens=max_tokens, json_schema=schema)
-        result = _parse_json(text)
-        return {
-            "summary": _clean_summary(result.get("summary"), prev_summary),
-            "suggestions": _clean_suggestions(result.get("suggestions")) if need_suggestions else [],
-            "ok": True,
-        }
-    except Exception as e:
-        logger.warning(f"[SUGGEST] 실패 → 이전 요약 유지: {type(e).__name__}: {e}")
-        return {
-            "summary": prev_summary,
-            "suggestions": _fallback_suggestions() if need_suggestions else [],
-            "ok": False,
-        }
+    요약과 제안은 LLM 호출을 따로 해서 동시에 돌린다 (한 번에 길게 생성하는 것보다 빨리 끝남).
+    제안은 이전 요약 + 최근 대화를 보고 만든다. "ok" 는 요약 성공 여부.
+    """
+    turns_text = format_turns(turns, user_id)
+    args = (prev_summary, turns_text, latest_text, speaker)
+    if need_suggestions:
+        (summary, ok), suggestions = await asyncio.gather(
+            _make_summary(*args), _make_suggestions(*args))
+    else:
+        (summary, ok), suggestions = await _make_summary(*args), []
+    return {"summary": summary, "suggestions": suggestions, "ok": ok}
