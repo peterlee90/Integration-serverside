@@ -50,3 +50,7 @@ SUGGEST_TURNS = 6            # 제안 만들 때 넣는 최근 대화 턴 수 (�
 SUMMARY_MAX_KEYWORDS = 8     # 요약 키워드 사람별 최대 개수
 SUGGEST_MAX_WORDS = 12       # 제안 한 문장 최대 단어 수
 SUGGEST_JSON_SCHEMA = True   # SGLang 구조화 출력으로 JSON 강제 (에러 나면 False 로)
+
+# ---- 제안 카드를 눌렀을 때 이어 붙이는 문장 (POST /suggest/expand) ----
+EXPAND_MAX_SENTENCES = 2     # 카드 문장 뒤에 덧붙이는 문장 수 (카드 1 + 이 값 = 최대 3문장)
+EXPAND_MAX_TOKENS = 120      # 덧붙이는 문장(영어 + 한국어 뜻) 생성 한도
