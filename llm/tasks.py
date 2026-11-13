@@ -12,7 +12,8 @@ from config import (
 from llm.client import build_prompt, complete_text
 from llm.prompts import chinese_fix_prompt
 from llm.suggest_prompts import (
-    SUGGESTIONS_SCHEMA, SUMMARY_SCHEMA, format_turns, suggestion_prompt, summary_prompt,
+    DIRECTIONS, ONE_SUGGESTION_SCHEMA, SUMMARY_SCHEMA,
+    format_turns, suggestion_prompt, summary_prompt,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,12 +59,14 @@ def _clean_summary(raw, prev: dict) -> dict:
     return out
 
 
-def _clean_suggestions(raw) -> list:
-    """제안 3개 형식 보정. 모자라면 기본 답장으로 채움."""
-    items = []
-    for s in raw if isinstance(raw, list) else []:
-        if isinstance(s, dict) and str(s.get("en", "")).strip():
-            items.append({"en": str(s["en"]).strip(), "ko": str(s.get("ko", "")).strip()})
+def _clean_suggestions(raw: list) -> list:
+    """제안 형식 보정. 빈 것·같은 문장은 빼고, 3개가 안 되면 기본 답장으로 채움."""
+    items, seen = [], set()
+    for s in raw:
+        en = str(s.get("en", "")).strip() if isinstance(s, dict) else ""
+        if en and en.lower() not in seen:
+            seen.add(en.lower())
+            items.append({"en": en, "ko": str(s.get("ko", "")).strip()})
     for fb in _fallback_suggestions():
         if len(items) >= 3:
             break
@@ -93,15 +96,24 @@ async def _make_summary(prev: dict, turns_text: str, latest_text: str, speaker: 
         return prev, False
 
 
-async def _make_suggestions(prev: dict, turns_text: str, latest_text: str, speaker: str) -> list:
-    """답장 3개. 실패하면 기본 답장."""
+async def _make_one(n: int, direction: str, prev: dict, turns_text: str,
+                    latest_text: str, speaker: str) -> dict | None:
+    """답장 1개 (방향 하나). 실패하면 None."""
     try:
-        result = await _ask_json("제안", suggestion_prompt(prev, turns_text, latest_text, speaker),
-                                 SUGGEST_MAX_TOKENS, SUGGESTIONS_SCHEMA)
-        return _clean_suggestions(result.get("suggestions"))
+        return await _ask_json(
+            f"제안{n}", suggestion_prompt(prev, turns_text, latest_text, speaker, direction),
+            SUGGEST_MAX_TOKENS // len(DIRECTIONS), ONE_SUGGESTION_SCHEMA)
     except Exception as e:
-        logger.warning(f"[SUGGEST] 제안 실패 → 기본 답장: {type(e).__name__}: {e}")
-        return _fallback_suggestions()
+        logger.warning(f"[SUGGEST] 제안{n} 실패: {type(e).__name__}: {e}")
+        return None
+
+
+async def _make_suggestions(prev: dict, turns_text: str, latest_text: str, speaker: str) -> list:
+    """답장 3개: 방향마다 LLM 을 따로 불러 동시에 돌린다. 실패한 자리는 기본 답장."""
+    results = await asyncio.gather(*[
+        _make_one(i + 1, d, prev, turns_text, latest_text, speaker)
+        for i, d in enumerate(DIRECTIONS)])
+    return _clean_suggestions(results)
 
 
 async def generate_reply_suggestions(
@@ -110,7 +122,7 @@ async def generate_reply_suggestions(
 ) -> dict:
     """요약을 갱신하고, need_suggestions 면 답장 3개도 만든다.
 
-    요약과 제안은 LLM 호출을 따로 해서 동시에 돌린다 (한 번에 길게 생성하는 것보다 빨리 끝남).
+    요약 1번 + 제안 3번을 LLM 호출을 따로 해서 동시에 돌린다 (한 번에 길게 생성하는 것보다 빨리 끝남).
     제안은 이전 요약 + 최근 대화를 보고 만든다. "ok" 는 요약 성공 여부.
     """
     turns_text = format_turns(turns, user_id)
