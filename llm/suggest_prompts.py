@@ -126,6 +126,3 @@ Task: Write what "Me" says right after that sentence, so the answer is not too s
 
 Output ONLY this JSON:
 {{"en": "...", "ko": "..."}}"""
-
-Output ONLY this JSON:
-{{"summary": {{"remote": ["키워드"], "me": ["키워드"]}}, "suggestions": [{{"en": "...", "ko": "..."}}, {{"en": "...", "ko": "..."}}, {{"en": "...", "ko": "..."}}]}}"""
