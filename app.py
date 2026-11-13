@@ -13,6 +13,7 @@ logging.basicConfig(
 import uvicorn  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 
+from api.say import router as say_router  # noqa: E402
 from api.suggest import router as suggest_router  # noqa: E402
 from api.suggest_stream import router as suggest_stream_router  # noqa: E402
 from api.translate import router as translate_router  # noqa: E402
@@ -42,6 +43,7 @@ app = FastAPI(lifespan=lifespan)
 app.include_router(translate_router)
 app.include_router(suggest_router)
 app.include_router(suggest_stream_router)
+app.include_router(say_router)
 
 
 if __name__ == "__main__":
