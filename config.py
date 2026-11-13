@@ -27,9 +27,13 @@ EMBED_BATCH_SIZE = 32
 SEARCH_LIMIT = 100
 RETRIEVE_TOP_K = 4
 
+# ---- 방별 대화 상태 (rooms/state.py) ----
+ROOM_MAX_TURNS = 30              # 방마다 보관하는 최근 대화 턴 수 (양쪽 화자 합쳐서)
+ROOM_IDLE_TTL_SEC = 3 * 60 * 60  # 이 시간 동안 요청 없는 방은 메모리에서 지움 (초)
+DEFAULT_DOMAIN = "league"        # 방이 처음 생길 때의 사전 도메인
+
 # ---- 번역 ----
-HISTORY_TURNS = 3            # 방마다 기억하는 이전 번역 수 (0 이면 문맥 안 넣음 = 학습 때와 같은 조건)
-DEFAULT_DOMAIN = "league"    # 처음 시작할 때의 사전 도메인
+HISTORY_TURNS = 3            # 번역 문맥으로 넣는 이전 턴 수 (0 이면 문맥 안 넣음 = 학습 때와 같은 조건)
 TRANSLATE_TEMPERATURE = 0.1
 TRANSLATE_MAX_TOKENS = 60      # 번역 1줄이면 충분
 TRANSLATE_STOP = ["\n"]        # 첫 줄만 받고 끊음 (학습·평가 때와 같음)
